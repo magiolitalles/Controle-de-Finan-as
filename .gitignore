@@ -18,6 +18,7 @@ dist/
 *.xlsx
 *.csv
 bot_log.txt
+.env
 
 # IDE
 .vscode/

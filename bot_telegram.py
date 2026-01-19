@@ -4,6 +4,10 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 import pandas as pd
 import openpyxl
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Carregar variáveis de ambiente
+load_dotenv()
 
 # Caminho do arquivo Excel
 ARQUIVO_EXCEL = "planilha_financeira.xlsx"
@@ -287,8 +291,13 @@ async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     """Função principal"""
-    # Coloque seu token aqui
-    TOKEN = "8184999803:AAFRY-xOPx5HAJypiZP8GdBEEDg2pqUyWPQ"
+    # Carregar token do arquivo .env
+    TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+    
+    if not TOKEN:
+        print("❌ ERRO: Token do Telegram não encontrado!")
+        print("Por favor, crie um arquivo .env baseado no .env.example")
+        return
     
     # Criar a aplicação
     application = Application.builder().token(TOKEN).build()
