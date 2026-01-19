@@ -179,13 +179,9 @@ async def receber_valor(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         context.user_data['valor'] = valor
         
-        config = carregar_configuracoes()
-        if config is None:
-            await update.message.reply_text("❌ Erro ao carregar configurações.")
-            return ConversationHandler.END
-        
-        # Criar teclado com os tipos
-        keyboard = [[tipo] for tipo in config['tipos']]
+        # Criar teclado com os tipos (fixos)
+        tipos = ['Receita', 'Despesa']
+        keyboard = [[tipo] for tipo in tipos]
         reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
         
         await update.message.reply_text(
@@ -201,7 +197,17 @@ async def receber_valor(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def receber_tipo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Recebe o tipo"""
-    context.user_data['tipo'] = update.message.text
+    tipo = update.message.text
+    
+    # Validar se o tipo é válido
+    if tipo not in ['Receita', 'Despesa']:
+        await update.message.reply_text(
+            "⚠️ Tipo inválido! Selecione apenas *Receita* ou *Despesa*.",
+            parse_mode='Markdown'
+        )
+        return TIPO
+    
+    context.user_data['tipo'] = tipo
     
     config = carregar_configuracoes()
     if config is None:
@@ -213,7 +219,7 @@ async def receber_tipo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
     
     await update.message.reply_text(
-        f"✅ Tipo: *{update.message.text}*\n\n"
+        f"✅ Tipo: *{tipo}*\n\n"
         "💳 Selecione o *método de pagamento*:",
         reply_markup=reply_markup,
         parse_mode='Markdown'
@@ -322,7 +328,7 @@ def main():
     application.add_handler(conv_handler)
     
     # Iniciar o bot
-    print("🤖 Bot iniciado! Pressione Ctrl+C para parar.")
+    print("Bot Telegram iniciado! Aguardando mensagens...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':

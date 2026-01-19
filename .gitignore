@@ -20,6 +20,12 @@ dist/
 bot_log.txt
 .env
 
+# Arquivos de execução
+.streamlit.pid
+.bot.pid
+streamlit.log
+bot_telegram.log
+
 # IDE
 .vscode/
 .idea/
