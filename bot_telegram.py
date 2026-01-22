@@ -98,12 +98,64 @@ def calcular_saldo():
         receitas_transcorrer = df_transcorrer[df_transcorrer['Tipo'] == 'Receita']['Valor'].sum()
         despesas_transcorrer = df_transcorrer[df_transcorrer['Tipo'] == 'Despesa']['Valor'].sum()
         
+        # Próxima receita (agrupada por data)
+        receitas_futuras = df[
+            (df['Data'].dt.date >= amanha.date()) & 
+            (df['Tipo'] == 'Receita')
+        ]
+        
+        proxima_receita = None
+        proxima_receita_data = None
+        if not receitas_futuras.empty:
+            # Agrupar por data e somar os valores
+            receitas_agrupadas = receitas_futuras.groupby('Data')['Valor'].sum().reset_index()
+            receitas_agrupadas = receitas_agrupadas.sort_values('Data')
+            proxima_receita = receitas_agrupadas.iloc[0]['Valor']
+            proxima_receita_data = receitas_agrupadas.iloc[0]['Data']
+        
+        # Próxima despesa (agrupada por data)
+        despesas_futuras = df[
+            (df['Data'].dt.date >= amanha.date()) & 
+            (df['Tipo'] == 'Despesa')
+        ]
+        
+        proxima_despesa = None
+        proxima_despesa_data = None
+        if not despesas_futuras.empty:
+            # Agrupar por data e somar os valores
+            despesas_agrupadas = despesas_futuras.groupby('Data')['Valor'].sum().reset_index()
+            despesas_agrupadas = despesas_agrupadas.sort_values('Data')
+            proxima_despesa = despesas_agrupadas.iloc[0]['Valor']
+            proxima_despesa_data = despesas_agrupadas.iloc[0]['Data']
+        
+        # Último lançamento (mais recente até a data atual)
+        df_ate_hoje = df[df['Data'].dt.date <= hoje.date()]
+        df_ordenado = df_ate_hoje.sort_values('Data', ascending=False)
+        ultimo_lancamento = None
+        ultimo_lancamento_data = None
+        ultimo_lancamento_descricao = None
+        ultimo_lancamento_tipo = None
+        ultimo_lancamento_valor = None
+        
+        if not df_ordenado.empty:
+            ultimo = df_ordenado.iloc[0]
+            ultimo_lancamento_data = ultimo['Data']
+            ultimo_lancamento_descricao = ultimo['Descrição']
+            ultimo_lancamento_tipo = ultimo['Tipo']
+            ultimo_lancamento_valor = ultimo['Valor']
+        
         return {
             'saldo_realizado': saldo_realizado,
-            'receitas_realizadas': receitas_realizadas,
-            'despesas_realizadas': despesas_realizadas,
             'receitas_transcorrer': receitas_transcorrer,
-            'despesas_transcorrer': despesas_transcorrer
+            'despesas_transcorrer': despesas_transcorrer,
+            'proxima_receita': proxima_receita,
+            'proxima_receita_data': proxima_receita_data,
+            'proxima_despesa': proxima_despesa,
+            'proxima_despesa_data': proxima_despesa_data,
+            'ultimo_lancamento_data': ultimo_lancamento_data,
+            'ultimo_lancamento_descricao': ultimo_lancamento_descricao,
+            'ultimo_lancamento_tipo': ultimo_lancamento_tipo,
+            'ultimo_lancamento_valor': ultimo_lancamento_valor
         }
     except Exception as e:
         print(f"Erro ao calcular saldo: {e}")
@@ -136,13 +188,45 @@ async def saldo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     mensagem = (
         "💰 *Resumo Financeiro*\n\n"
-        f"✅ *Saldo Realizado:* R$ {resultado['saldo_realizado']:,.2f}\n"
-        f"💚 Receitas realizadas: R$ {resultado['receitas_realizadas']:,.2f}\n"
-        f"❤️ Despesas realizadas: R$ {resultado['despesas_realizadas']:,.2f}\n\n"
+        f"✅ *Saldo:* R$ {resultado['saldo_realizado']:,.2f}\n\n"
         f"📅 *A Transcorrer:*\n"
         f"Receitas: R$ {resultado['receitas_transcorrer']:,.2f}\n"
-        f"Despesas: R$ {resultado['despesas_transcorrer']:,.2f}"
+        f"Despesas: R$ {resultado['despesas_transcorrer']:,.2f}\n\n"
     )
+    
+    # Adicionar informação do último lançamento
+    if resultado['ultimo_lancamento_data'] is not None:
+        data_formatada = resultado['ultimo_lancamento_data'].strftime('%d/%m/%Y')
+        mensagem += (
+            f"📝 *Último Lançamento:*\n"
+            f"{resultado['ultimo_lancamento_tipo']}: {resultado['ultimo_lancamento_descricao']}\n"
+            f"Valor: R$ {resultado['ultimo_lancamento_valor']:,.2f}\n"
+            f"Data: {data_formatada}\n\n"
+        )
+    else:
+        mensagem += "📝 *Último Lançamento:* Nenhum lançamento registrado\n\n"
+    
+    # Adicionar informação da próxima receita
+    if resultado['proxima_receita'] is not None:
+        data_formatada = resultado['proxima_receita_data'].strftime('%d/%m/%Y')
+        mensagem += (
+            f"💵 *Próxima Receita:*\n"
+            f"Valor: R$ {resultado['proxima_receita']:,.2f}\n"
+            f"Data: {data_formatada}\n\n"
+        )
+    else:
+        mensagem += "💵 *Próxima Receita:* Nenhuma receita futura registrada\n\n"
+    
+    # Adicionar informação da próxima despesa
+    if resultado['proxima_despesa'] is not None:
+        data_formatada = resultado['proxima_despesa_data'].strftime('%d/%m/%Y')
+        mensagem += (
+            f"💳 *Próxima Despesa:*\n"
+            f"Valor: R$ {resultado['proxima_despesa']:,.2f}\n"
+            f"Data: {data_formatada}"
+        )
+    else:
+        mensagem += "💳 *Próxima Despesa:* Nenhuma despesa futura registrada"
     
     await update.message.reply_text(mensagem, parse_mode='Markdown')
 
@@ -302,7 +386,6 @@ def main():
     
     if not TOKEN:
         print("❌ ERRO: Token do Telegram não encontrado!")
-        print("Por favor, crie um arquivo .env baseado no .env.example")
         return
     
     # Criar a aplicação
