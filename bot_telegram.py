@@ -169,6 +169,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Comandos disponíveis:\n"
         "/novo - Adicionar novo lançamento\n"
         "/saldo - Ver saldo e resumo\n"
+        "/historico - Ver últimos 5 lançamentos\n"
         "/cancelar - Cancelar operação atual\n"
         "/ajuda - Ver esta mensagem"
     )
@@ -177,6 +178,45 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /ajuda"""
     await start(update, context)
+
+async def historico(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /historico - Mostra os últimos 5 lançamentos já realizados"""
+    try:
+        df = pd.read_excel(ARQUIVO_EXCEL, sheet_name='Lançamentos')
+        
+        if df.empty:
+            await update.message.reply_text("📭 Nenhum lançamento registrado ainda.")
+            return
+        
+        # Filtrar apenas lançamentos até hoje
+        hoje = pd.Timestamp(datetime.now().date())
+        df_realizados = df[df['Data'].dt.date <= hoje.date()]
+        
+        if df_realizados.empty:
+            await update.message.reply_text("📭 Nenhum lançamento realizado até hoje.")
+            return
+        
+        # Ordenar por data decrescente e pegar os últimos 5
+        df_ordenado = df_realizados.sort_values('Data', ascending=False).head(5)
+        
+        mensagem = "📝 *Últimos 5 Lançamentos:*\n\n"
+        
+        for idx, row in df_ordenado.iterrows():
+            data_formatada = row['Data'].strftime('%d/%m/%Y')            
+            mensagem += (
+                f"*{row['Tipo']}*\n"
+                f"📝 {row['Descrição']}\n"
+                f"💰 R$ {row['Valor']:,.2f}\n"
+                f"🏷️ {row['Categoria']}\n"
+                f"💳 {row['Método']}\n"
+                f"📅 {data_formatada}\n\n"
+            )
+        
+        await update.message.reply_text(mensagem, parse_mode='Markdown')
+        
+    except Exception as e:
+        print(f"Erro ao buscar histórico: {e}")
+        await update.message.reply_text("❌ Erro ao buscar histórico. Tente novamente.")
 
 async def saldo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /saldo"""
@@ -408,6 +448,7 @@ def main():
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('ajuda', ajuda))
     application.add_handler(CommandHandler('saldo', saldo))
+    application.add_handler(CommandHandler('historico', historico))
     application.add_handler(conv_handler)
     
     # Iniciar o bot
