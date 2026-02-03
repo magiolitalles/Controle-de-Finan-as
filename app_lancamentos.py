@@ -58,13 +58,23 @@ def carregar_lancamentos():
     """Carrega os lançamentos da aba Lançamentos"""
     try:
         df = pd.read_excel(ARQUIVO_EXCEL, sheet_name='Lançamentos')
+        
+        # Se a coluna Contas não existe, criar com valor padrão "Nubank"
+        if 'Contas' not in df.columns:
+            df['Contas'] = 'Nubank'
+        else:
+            # Preencher valores vazios/NaN com "Nubank" e remover espaços extras
+            df['Contas'] = df['Contas'].fillna('Nubank')
+            df['Contas'] = df['Contas'].astype(str).str.strip()
+            df.loc[df['Contas'] == '', 'Contas'] = 'Nubank'
+        
         return df
     except Exception as e:
         st.error(f"Erro ao carregar lançamentos: {e}")
         return pd.DataFrame()
 
 # Função para adicionar novo lançamento
-def adicionar_lancamento(data, descricao, categoria, tipo, valor, metodo, status='Realizado'):
+def adicionar_lancamento(data, descricao, categoria, tipo, valor, metodo, conta, status='Realizado'):
     """Adiciona um novo lançamento à planilha"""
     try:
         # Carregar o arquivo Excel
@@ -82,6 +92,7 @@ def adicionar_lancamento(data, descricao, categoria, tipo, valor, metodo, status
         ws[f'E{ultima_linha}'] = valor
         ws[f'F{ultima_linha}'] = metodo
         ws[f'G{ultima_linha}'] = status
+        ws[f'H{ultima_linha}'] = conta
         
         # Salvar o arquivo
         wb.save(ARQUIVO_EXCEL)
@@ -143,7 +154,10 @@ with st.sidebar:
         df_lancamentos[col] = df_lancamentos[col].astype(str)
     
     if not df_lancamentos.empty:
-        ultimos = df_lancamentos.tail(5)[['Data', 'Descrição', 'Tipo', 'Valor']].copy()
+        colunas = ['Data', 'Descrição', 'Tipo', 'Valor']
+        if 'Contas' in df_lancamentos.columns:
+            colunas.insert(1, 'Contas')
+        ultimos = df_lancamentos.tail(5)[colunas].copy()
         st.dataframe(ultimos, use_container_width=True)
     else:
         st.write("Nenhum lançamento registrado ainda.")
@@ -154,6 +168,13 @@ tab1, tab2, tab3 = st.tabs(["📥 Novo Lançamento", "📊 Visualizar Lançament
 # TAB 1: Novo Lançamento
 with tab1:
     st.subheader("Adicione um novo lançamento")
+    
+    # Adicionar seleção de conta
+    conta = st.selectbox(
+        "🏦 Conta",
+        options=['Nubank', 'Banco do Brasil'],
+        help="Selecione a conta do lançamento"
+    )
     
     col1, col2 = st.columns(2)
     
@@ -169,12 +190,6 @@ with tab1:
             placeholder="Ex: Almoço, Compras, Salário...",
             help="Descreva brevemente o lançamento"
         )
-        
-        categoria = st.selectbox(
-            "🏷️ Categoria",
-            options=config['todas_categorias'],
-            help="Selecione a categoria do lançamento"
-        )
     
     with col2:
         tipo = st.radio(
@@ -183,7 +198,21 @@ with tab1:
             horizontal=True,
             help="Selecione se é receita ou despesa"
         )
-        
+    
+    # Definir categorias baseadas no tipo selecionado
+    if tipo == 'Receita':
+        categorias_disponiveis = ['Salário', 'Extras']
+    else:
+        categorias_disponiveis = config['todas_categorias']
+    
+    with col1:
+        categoria = st.selectbox(
+            "🏷️ Categoria",
+            options=categorias_disponiveis,
+            help="Selecione a categoria do lançamento"
+        )
+    
+    with col2:
         valor = st.number_input(
             "💰 Valor",
             min_value=0.0,
@@ -192,11 +221,21 @@ with tab1:
             help="Insira o valor do lançamento"
         )
         
-        metodo = st.selectbox(
-            "💳 Método de Pagamento",
-            options=config['metodos'],
-            help="Selecione o método de pagamento"
-        )
+        # Se for Receita, método é automático (Pix/Débito)
+        if tipo == 'Receita':
+            st.text_input(
+                "💳 Método de Pagamento",
+                value="Pix/Débito",
+                disabled=True,
+                help="Método automático para receitas"
+            )
+            metodo = 'Pix/Débito'
+        else:
+            metodo = st.selectbox(
+                "💳 Método de Pagamento",
+                options=config['metodos'],
+                help="Selecione o método de pagamento"
+            )
     
     # Botão para adicionar
     col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
@@ -211,7 +250,7 @@ with tab1:
                 # Converter data para datetime
                 data_datetime = pd.Timestamp(data)
                 
-                if adicionar_lancamento(data_datetime, descricao, categoria, tipo, valor, metodo):
+                if adicionar_lancamento(data_datetime, descricao, categoria, tipo, valor, metodo, conta):
                     st.markdown(
                         f"<div class='success-box'><strong>✅ Sucesso!</strong> Lançamento adicionado com sucesso!</div>",
                         unsafe_allow_html=True
@@ -288,7 +327,7 @@ with tab2:
         df_lancamentos[col] = df_lancamentos[col].astype(str)
     
     if not df_lancamentos.empty:
-        # Filtros
+        # Filtros - linha 1
         col_filt1, col_filt2, col_filt3 = st.columns(3)
         
         with col_filt1:
@@ -306,16 +345,36 @@ with tab2:
             )
         
         with col_filt3:
+            # Filtro de conta (se a coluna existir)
+            if 'Contas' in df_lancamentos.columns:
+                conta_filtro = st.multiselect(
+                    "Filtrar por Conta",
+                    options=df_lancamentos['Contas'].unique(),
+                    default=df_lancamentos['Contas'].unique()
+                )
+        
+        # Filtros - linha 2
+        col_filt4, col_filt5 = st.columns(2)
+        
+        with col_filt4:
             data_inicio = st.date_input("Data Inicial", value=df_lancamentos['Data'].min())
+        
+        with col_filt5:
             data_fim = st.date_input("Data Final", value=df_lancamentos['Data'].max())
         
         # Aplicar filtros
-        df_filtrado = df_lancamentos[
+        filtro_base = (
             (df_lancamentos['Tipo'].isin(tipo_filtro)) &
             (df_lancamentos['Categoria'].isin(categoria_filtro)) &
             (df_lancamentos['Data'].dt.date >= data_inicio) &
             (df_lancamentos['Data'].dt.date <= data_fim)
-        ]
+        )
+        
+        # Adicionar filtro de conta se a coluna existir
+        if 'Contas' in df_lancamentos.columns:
+            filtro_base = filtro_base & (df_lancamentos['Contas'].isin(conta_filtro))
+        
+        df_filtrado = df_lancamentos[filtro_base]
         
         # Exibir tabela
         st.dataframe(df_filtrado, use_container_width=True, hide_index=True)
@@ -364,6 +423,26 @@ with tab3:
         
         with col_total3:
             st.metric("💙 Saldo Geral", f"R$ {saldo_geral:,.2f}")
+        
+        # Adicionar resumo por conta se a coluna existir
+        if 'Contas' in df_lancamentos.columns:
+            st.divider()
+            st.subheader("🏦 Saldo por Conta")
+            
+            col_conta1, col_conta2 = st.columns(2)
+            
+            contas = df_lancamentos['Contas'].unique()
+            for idx, conta in enumerate(contas):
+                df_conta = df_lancamentos[df_lancamentos['Contas'] == conta]
+                receitas_conta = df_conta[df_conta['Tipo'] == 'Receita']['Valor'].sum()
+                despesas_conta = df_conta[df_conta['Tipo'] == 'Despesa']['Valor'].sum()
+                saldo_conta = receitas_conta - despesas_conta
+                
+                col = col_conta1 if idx % 2 == 0 else col_conta2
+                with col:
+                    st.markdown(f"**{conta}**")
+                    st.metric("Saldo", f"R$ {saldo_conta:,.2f}", delta=None)
+                    st.caption(f"Receitas: R$ {receitas_conta:,.2f} | Despesas: R$ {despesas_conta:,.2f}")
         
         st.divider()
         

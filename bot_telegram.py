@@ -13,7 +13,14 @@ load_dotenv()
 ARQUIVO_EXCEL = "planilha_financeira.xlsx"
 
 # Estados da conversa
-DESCRICAO, VALOR, TIPO, METODO, CATEGORIA = range(5)
+CONTA, DESCRICAO, VALOR, TIPO, METODO, CATEGORIA = range(6)
+SALDO_CONTA = 100  # Estado para seleção de conta no comando /saldo
+
+# Contas disponíveis
+CONTAS = ['Nubank', 'Banco do Brasil']
+
+# Categorias para receitas
+CATEGORIAS_RECEITA = ['Salário', 'Extras']
 
 # Funções auxiliares
 def carregar_configuracoes():
@@ -38,7 +45,7 @@ def carregar_configuracoes():
         print(f"Erro ao carregar configurações: {e}")
         return None
 
-def adicionar_lancamento(data, descricao, categoria, tipo, valor, metodo):
+def adicionar_lancamento(data, descricao, categoria, tipo, valor, metodo, conta):
     """Adiciona um novo lançamento à planilha"""
     try:
         wb = openpyxl.load_workbook(ARQUIVO_EXCEL)
@@ -53,6 +60,7 @@ def adicionar_lancamento(data, descricao, categoria, tipo, valor, metodo):
         ws[f'E{ultima_linha}'] = valor
         ws[f'F{ultima_linha}'] = metodo
         ws[f'G{ultima_linha}'] = 'Realizado'
+        ws[f'H{ultima_linha}'] = conta
         
         wb.save(ARQUIVO_EXCEL)
         wb.close()
@@ -62,17 +70,37 @@ def adicionar_lancamento(data, descricao, categoria, tipo, valor, metodo):
         print(f"Erro ao adicionar lançamento: {e}")
         return False
 
-def calcular_saldo():
-    """Calcula o saldo realizado e a transcorrer"""
+def calcular_saldo(conta=None):
+    """Calcula o saldo realizado e a transcorrer
+    
+    Args:
+        conta: Nome da conta para filtrar (opcional). Se None, calcula para todas as contas.
+    """
     try:
         df = pd.read_excel(ARQUIVO_EXCEL, sheet_name='Lançamentos')
         
         if df.empty:
             return None
         
-        hoje = pd.Timestamp(datetime.now().date())
+        # Se a coluna Contas não existe, criar com valor padrão "Nubank"
+        if 'Contas' not in df.columns:
+            df['Contas'] = 'Nubank'
+        else:
+            # Preencher valores vazios/NaN com "Nubank" e remover espaços extras
+            df['Contas'] = df['Contas'].fillna('Nubank')
+            df['Contas'] = df['Contas'].astype(str).str.strip()
+            df.loc[df['Contas'] == '', 'Contas'] = 'Nubank'
+        
+        # Filtrar por conta se especificado (também remove espaços da conta buscada)
+        if conta:
+            conta_filtro = conta.strip()
+            df = df[df['Contas'] == conta_filtro]
+            if df.empty:
+                return None
         
         # Calcular o último dia do mês seguinte
+        hoje = pd.Timestamp(datetime.now().date())
+        
         if hoje.month == 12:
             proximo_mes = hoje.replace(year=hoje.year + 1, month=1, day=1)
         else:
@@ -188,6 +216,15 @@ async def historico(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("📭 Nenhum lançamento registrado ainda.")
             return
         
+        # Se a coluna Contas não existe, criar com valor padrão "Nubank"
+        if 'Contas' not in df.columns:
+            df['Contas'] = 'Nubank'
+        else:
+            # Preencher valores vazios/NaN com "Nubank" e remover espaços extras
+            df['Contas'] = df['Contas'].fillna('Nubank')
+            df['Contas'] = df['Contas'].astype(str).str.strip()
+            df.loc[df['Contas'] == '', 'Contas'] = 'Nubank'
+        
         # Filtrar apenas lançamentos até hoje
         hoje = pd.Timestamp(datetime.now().date())
         df_realizados = df[df['Data'].dt.date <= hoje.date()]
@@ -202,9 +239,11 @@ async def historico(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mensagem = "📝 *Últimos 5 Lançamentos:*\n\n"
         
         for idx, row in df_ordenado.iterrows():
-            data_formatada = row['Data'].strftime('%d/%m/%Y')            
+            data_formatada = row['Data'].strftime('%d/%m/%Y')
+            conta = row.get('Contas', 'N/A')  # Conta padrão caso não exista
             mensagem += (
                 f"*{row['Tipo']}*\n"
+                f"🏦 {conta}\n"
                 f"📝 {row['Descrição']}\n"
                 f"💰 R$ {row['Valor']:,.2f}\n"
                 f"🏷️ {row['Categoria']}\n"
@@ -219,15 +258,42 @@ async def historico(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Erro ao buscar histórico. Tente novamente.")
 
 async def saldo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando /saldo"""
-    resultado = calcular_saldo()
+    """Comando /saldo - Pede a conta para exibir o saldo"""
+    # Criar teclado com as contas
+    keyboard = [[conta] for conta in CONTAS]
+    reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+    
+    await update.message.reply_text(
+        "💰 Para consultar o saldo, selecione a *conta*:",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+    return SALDO_CONTA
+
+async def receber_saldo_conta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Recebe a conta e exibe o saldo"""
+    conta = update.message.text
+    
+    # Validar se a conta é válida
+    if conta not in CONTAS:
+        await update.message.reply_text(
+            "⚠️ Conta inválida! Selecione apenas *Nubank* ou *Banco do Brasil*.",
+            parse_mode='Markdown'
+        )
+        return SALDO_CONTA
+    
+    resultado = calcular_saldo(conta)
     
     if resultado is None:
-        await update.message.reply_text("📭 Nenhum lançamento registrado ainda.")
-        return
+        await update.message.reply_text(
+            f"📭 Nenhum lançamento registrado para a conta *{conta}*.",
+            reply_markup=ReplyKeyboardRemove(),
+            parse_mode='Markdown'
+        )
+        return ConversationHandler.END
     
     mensagem = (
-        "💰 *Resumo Financeiro*\n\n"
+        f"💰 *Resumo Financeiro - {conta}*\n\n"
         f"✅ *Saldo:* R$ {resultado['saldo_realizado']:,.2f}\n\n"
         f"📅 *A Transcorrer:*\n"
         f"Receitas: R$ {resultado['receitas_transcorrer']:,.2f}\n"
@@ -268,15 +334,46 @@ async def saldo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         mensagem += "💳 *Próxima Despesa:* Nenhuma despesa futura registrada"
     
-    await update.message.reply_text(mensagem, parse_mode='Markdown')
+    await update.message.reply_text(
+        mensagem,
+        reply_markup=ReplyKeyboardRemove(),
+        parse_mode='Markdown'
+    )
+    return ConversationHandler.END
 
 async def novo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Inicia o processo de adicionar novo lançamento"""
+    # Criar teclado com as contas
+    keyboard = [[conta] for conta in CONTAS]
+    reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+    
     await update.message.reply_text(
         "📝 Vamos adicionar um novo lançamento!\n\n"
-        "Por favor, envie a *descrição* do lançamento:\n"
-        "(Ex: Almoço, Compras, Salário, etc.)\n\n"
-        "Use /cancelar para cancelar.",
+        "🏦 Primeiro, selecione a *conta*:",
+        reply_markup=reply_markup,
+        parse_mode='Markdown'
+    )
+    return CONTA
+
+async def receber_conta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Recebe a conta"""
+    conta = update.message.text
+    
+    # Validar se a conta é válida
+    if conta not in CONTAS:
+        await update.message.reply_text(
+            "⚠️ Conta inválida! Selecione apenas *Nubank* ou *Banco do Brasil*.",
+            parse_mode='Markdown'
+        )
+        return CONTA
+    
+    context.user_data['conta'] = conta
+    
+    await update.message.reply_text(
+        f"✅ Conta: *{conta}*\n\n"
+        "📝 Agora, envie a *descrição* do lançamento:\n"
+        "(Ex: Almoço, Compras, Salário, etc.)",
+        reply_markup=ReplyKeyboardRemove(),
         parse_mode='Markdown'
     )
     return DESCRICAO
@@ -333,6 +430,27 @@ async def receber_tipo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     context.user_data['tipo'] = tipo
     
+    # Se for Receita, definir método automaticamente e pular para categoria
+    if tipo == 'Receita':
+        context.user_data['metodo'] = 'Pix/Débito'
+        
+        # Apenas Salário e Extras para receitas
+        categorias = CATEGORIAS_RECEITA
+        
+        # Criar teclado com as categorias
+        keyboard = [categorias[i:i+2] for i in range(0, len(categorias), 2)]
+        reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+        
+        await update.message.reply_text(
+            f"✅ Tipo: *{tipo}*\n"
+            f"✅ Método: *Pix/Débito* (automático)\n\n"
+            "🏷️ Selecione a *categoria*:",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+        return CATEGORIA
+    
+    # Se for Despesa, continuar com seleção de método
     config = carregar_configuracoes()
     if config is None:
         await update.message.reply_text("❌ Erro ao carregar configurações.")
@@ -354,13 +472,21 @@ async def receber_metodo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Recebe o método"""
     context.user_data['metodo'] = update.message.text
     
-    config = carregar_configuracoes()
-    if config is None:
-        await update.message.reply_text("❌ Erro ao carregar configurações.")
-        return ConversationHandler.END
+    # Verificar o tipo selecionado para determinar as categorias disponíveis
+    tipo = context.user_data.get('tipo')
+    
+    if tipo == 'Receita':
+        # Para receitas, apenas Salário e Extras
+        categorias = CATEGORIAS_RECEITA
+    else:
+        # Para despesas, todas as categorias
+        config = carregar_configuracoes()
+        if config is None:
+            await update.message.reply_text("❌ Erro ao carregar configurações.")
+            return ConversationHandler.END
+        categorias = config['todas_categorias']
     
     # Criar teclado com as categorias (2 por linha para facilitar)
-    categorias = config['todas_categorias']
     keyboard = [categorias[i:i+2] for i in range(0, len(categorias), 2)]
     reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
     
@@ -378,15 +504,17 @@ async def receber_categoria(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Salvar o lançamento
     data = datetime.now()
+    conta = context.user_data['conta']
     descricao = context.user_data['descricao']
     valor = context.user_data['valor']
     tipo = context.user_data['tipo']
     metodo = context.user_data['metodo']
     categoria = context.user_data['categoria']
     
-    if adicionar_lancamento(data, descricao, categoria, tipo, valor, metodo):
+    if adicionar_lancamento(data, descricao, categoria, tipo, valor, metodo, conta):
         mensagem = (
             "✅ *Lançamento adicionado com sucesso!*\n\n"
+            f"🏦 Conta: {conta}\n"
             f"📝 Descrição: {descricao}\n"
             f"💰 Valor: R$ {valor:.2f}\n"
             f"💵 Tipo: {tipo}\n"
@@ -432,9 +560,10 @@ def main():
     application = Application.builder().token(TOKEN).build()
     
     # Handler de conversa para adicionar lançamento
-    conv_handler = ConversationHandler(
+    conv_handler_novo = ConversationHandler(
         entry_points=[CommandHandler('novo', novo)],
         states={
+            CONTA: [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_conta)],
             DESCRICAO: [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_descricao)],
             VALOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_valor)],
             TIPO: [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_tipo)],
@@ -444,12 +573,21 @@ def main():
         fallbacks=[CommandHandler('cancelar', cancelar)]
     )
     
+    # Handler de conversa para consultar saldo
+    conv_handler_saldo = ConversationHandler(
+        entry_points=[CommandHandler('saldo', saldo)],
+        states={
+            SALDO_CONTA: [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_saldo_conta)],
+        },
+        fallbacks=[CommandHandler('cancelar', cancelar)]
+    )
+    
     # Adicionar handlers
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('ajuda', ajuda))
-    application.add_handler(CommandHandler('saldo', saldo))
     application.add_handler(CommandHandler('historico', historico))
-    application.add_handler(conv_handler)
+    application.add_handler(conv_handler_novo)
+    application.add_handler(conv_handler_saldo)
     
     # Iniciar o bot
     print("Bot Telegram iniciado! Aguardando mensagens...")
